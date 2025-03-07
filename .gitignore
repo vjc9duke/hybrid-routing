@@ -3,3 +3,7 @@
 ._*
 .Apple*
 .DS_Store
+
+*.fdb_latexmk
+*.fls
+*.synctex.gz
