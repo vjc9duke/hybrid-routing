@@ -360,11 +360,164 @@ double KNCube::Capacity() const
   return (double)_k / (_mesh ? 8.0 : 4.0);
 }
 
-int custom_helper(int cur, int dest, bool descending = false);
-
 void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
 {
-  int out_port = inject ? -1 : custom_helper(r->GetID(), f->dest);
+  // Handle injection first
+  if (inject)
+  {
+    outputs->Clear();
+    outputs->AddRange(-1, 0, gNumVCs - 1);
+    return;
+  }
+
+  // Calculate congestion threshold based on buffer occupancy
+  int max_threshold = 0;
+  for (int i = 0; i < 4; i++)
+  {
+    max_threshold += r->GetBufferOccupancy(i);
+  }
+  int congestion_threshold = max_threshold / 2;
+
+  // Check congestion in both X and Y dimensions
+  int east_cong = r->GetUsedCredit(0);  // East port
+  int west_cong = r->GetUsedCredit(1);  // West port
+  int south_cong = r->GetUsedCredit(2); // South port
+  int north_cong = r->GetUsedCredit(3); // North port
+
+  // Calculate average congestion
+  int avg_congestion = (east_cong + west_cong + south_cong + north_cong) / 4;
+
+  if (avg_congestion < congestion_threshold)
+  {
+    dim_order_route(r, f, in_channel, outputs, inject);
+  }
+  else
+  {
+    odd_even_route(r, f, in_channel, outputs, inject);
+  }
+}
+
+void odd_even_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
+  // Handle injection first
+  if (inject)
+  {
+    outputs->Clear();
+    outputs->AddRange(-1, 0, gNumVCs - 1);
+    return;
+  }
+
+  // Get current and destination coordinates
+  int cur = r->GetID();
+  int dest = f->dest;
+
+  // Calculate current and destination coordinates
+  int cur_x = cur % gK;
+  int cur_y = cur / gK;
+  int dest_x = dest % gK;
+  int dest_y = dest / gK;
+
+  outputs->Clear();
+
+  // Assign VCs based on direction to prevent deadlock
+  // Use first half of VCs for X dimension, second half for Y dimension
+  int const available_vcs = gNumVCs / 2;
+  assert(available_vcs > 0);
+
+  int vcBegin = 0;
+  int vcEnd = gNumVCs - 1;
+
+  // If we've reached the destination column, only use Y-dimension VCs
+  if (cur_x == dest_x)
+  {
+    vcBegin = available_vcs; // Use second half of VCs for Y movement
+    if (cur_y > dest_y)
+    {
+      outputs->AddRange(3, vcBegin, vcEnd); // North
+    }
+    else if (cur_y < dest_y)
+    {
+      outputs->AddRange(2, vcBegin, vcEnd); // South
+    }
+    else
+    {
+      outputs->AddRange(2 * gN, vcBegin, vcEnd); // Eject
+    }
+    return;
+  }
+
+  // Determine available turns based on odd-even rules
+  bool is_x_even = (cur_x % 2 == 0);
+  vector<int> available_ports;
+
+  // Moving East
+  if (cur_x < dest_x)
+  {
+    available_ports.push_back(0); // East port
+    vcEnd = available_vcs - 1;    // Use first half of VCs for X movement
+
+    // At even x-coordinates, can't turn north/south after going east
+    if (!is_x_even && cur_y != dest_y)
+    {
+      vcBegin = available_vcs; // Use second half of VCs for Y movement
+      vcEnd = gNumVCs - 1;
+      if (cur_y < dest_y)
+      {
+        available_ports.push_back(2); // South
+      }
+      if (cur_y > dest_y)
+      {
+        available_ports.push_back(3); // North
+      }
+    }
+  }
+  // Moving West
+  else if (cur_x > dest_x)
+  {
+    available_ports.push_back(1); // West port
+    vcEnd = available_vcs - 1;    // Use first half of VCs for X movement
+
+    // At odd x-coordinates, can't turn from north/south to west
+    if (is_x_even && cur_y != dest_y)
+    {
+      vcBegin = available_vcs; // Use second half of VCs for Y movement
+      vcEnd = gNumVCs - 1;
+      if (cur_y < dest_y)
+      {
+        available_ports.push_back(2); // South
+      }
+      if (cur_y > dest_y)
+      {
+        available_ports.push_back(3); // North
+      }
+    }
+  }
+
+  // Add ports with proper VC ranges
+  for (size_t i = 0; i < available_ports.size(); ++i)
+  {
+    int port = available_ports[i];
+    // Use congestion to determine order of ports
+    int congestion = r->GetUsedCredit(port);
+    if (congestion < r->GetUsedCredit(available_ports[0]))
+    {
+      outputs->Clear(); // Clear previous ports if we found a less congested one
+    }
+    outputs->AddRange(port, vcBegin, vcEnd);
+  }
+
+  // If no ports were added (shouldn't happen), use dimension ordered routing as fallback
+  if (outputs->GetSet().empty())
+  {
+    dim_order_route(r, f, in_channel, outputs, inject);
+  }
+}
+
+int dim_order_helper(int cur, int dest, bool descending = false);
+
+void dim_order_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
+  int out_port = inject ? -1 : dim_order_helper(r->GetID(), f->dest);
 
   int vcBegin = 0, vcEnd = gNumVCs - 1;
   if (f->type == Flit::READ_REQUEST)
@@ -407,7 +560,7 @@ void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *out
   outputs->AddRange(out_port, vcBegin, vcEnd);
 }
 
-int custom_helper(int cur, int dest, bool descending)
+int dim_order_helper(int cur, int dest, bool descending)
 {
   if (cur == dest)
   {

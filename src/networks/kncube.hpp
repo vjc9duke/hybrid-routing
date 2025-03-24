@@ -62,6 +62,10 @@ public:
 
 void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
 
-int custom_helper(int cur, int dest, bool descending);
+void odd_even_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
+
+void dim_order_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
+
+int dim_order_helper(int cur, int dest, bool descending);
 
 #endif
