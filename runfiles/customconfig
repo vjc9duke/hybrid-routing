@@ -72,15 +72,15 @@ n  = 2;
 // Routing
 
 
-routing_function = custom;
+routing_function = min_adapt;
 
 packet_size = 1;
 
 use_read_write = 0;
 
-traffic       = uniform;
+traffic       = tornado;
 
-injection_rate = 0.2;
+injection_rate = 0.26;
 
 
 
