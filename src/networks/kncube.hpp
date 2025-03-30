@@ -60,7 +60,11 @@ public:
   void InsertRandomFaults(const Configuration &config);
 };
 
+extern float gThresholdMultiplier;
+
 void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
+
+void custom_global_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
 
 void odd_even_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
 

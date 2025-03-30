@@ -41,6 +41,8 @@
 #include "misc_utils.hpp"
 // #include "iq_router.hpp"
 
+float gThresholdMultiplier = 0.5;
+
 KNCube::KNCube(const Configuration &config, const string &name, bool mesh) : Network(config, name)
 {
   _mesh = mesh;
@@ -48,6 +50,8 @@ KNCube::KNCube(const Configuration &config, const string &name, bool mesh) : Net
   _ComputeSize(config);
   _Alloc();
   _BuildNet(config);
+
+  gThresholdMultiplier = config.GetFloat("threshold_multiplier");
 }
 
 void KNCube::_ComputeSize(const Configuration &config)
@@ -66,6 +70,8 @@ void KNCube::_ComputeSize(const Configuration &config)
 void KNCube::RegisterRoutingFunctions()
 {
   gRoutingFunctionMap["custom_mesh"] = &custom_route;
+  gRoutingFunctionMap["custom_global_mesh"] = &custom_global_route;
+  gRoutingFunctionMap["odd_even_mesh"] = &odd_even_route;
 }
 
 void KNCube::_BuildNet(const Configuration &config)
@@ -360,6 +366,39 @@ double KNCube::Capacity() const
   return (double)_k / (_mesh ? 8.0 : 4.0);
 }
 
+void custom_global_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
+  if (inject)
+  {
+    outputs->Clear();
+    outputs->AddRange(-1, 0, gNumVCs - 1);
+    return;
+  }
+
+  int global_max_threshold = 0;
+  for (int i = 0; i < 2 * gN; i++) // Check all input/output ports
+  {
+    global_max_threshold += r->GetBufferOccupancy(i);
+  }
+  int global_congestion_threshold = global_max_threshold * gThresholdMultiplier / gN; // Average across all ports
+
+  int east_cong = r->GetUsedCredit(0);  // East port
+  int west_cong = r->GetUsedCredit(1);  // West port
+  int south_cong = r->GetUsedCredit(2); // South port
+  int north_cong = r->GetUsedCredit(3); // North port
+
+  int global_avg_congestion = (east_cong + west_cong + south_cong + north_cong) / 4;
+
+  if (global_avg_congestion < global_congestion_threshold)
+  {
+    dim_order_route(r, f, in_channel, outputs, inject);
+  }
+  else
+  {
+    odd_even_route(r, f, in_channel, outputs, inject);
+  }
+}
+
 void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
 {
   // Handle injection first
@@ -376,7 +415,7 @@ void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *out
   {
     max_threshold += r->GetBufferOccupancy(i);
   }
-  int congestion_threshold = max_threshold / 2;
+  int congestion_threshold = max_threshold * gThresholdMultiplier;
 
   // Check congestion in both X and Y dimensions
   int east_cong = r->GetUsedCredit(0);  // East port

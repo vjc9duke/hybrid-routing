@@ -1,2 +1,2 @@
 make
-./booksim ../runfiles/customconfig
+./booksim ../runfiles/$1config
