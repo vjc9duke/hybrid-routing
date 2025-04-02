@@ -69,9 +69,12 @@ void KNCube::_ComputeSize(const Configuration &config)
 
 void KNCube::RegisterRoutingFunctions()
 {
-  gRoutingFunctionMap["custom_mesh"] = &custom_route;
-  gRoutingFunctionMap["custom_global_mesh"] = &custom_global_route;
+  gRoutingFunctionMap["custom_turn_local_mesh"] = &custom_route;
+  gRoutingFunctionMap["custom__turn_global_mesh"] = &custom_global_route;
   gRoutingFunctionMap["odd_even_mesh"] = &odd_even_route;
+  gRoutingFunctionMap["custom_min_adaptive_mesh"] = &custom_min_adaptive_route;
+  gRoutingFunctionMap["custom_min_adaptive_local_mesh"] = &custom_min_adaptive_local_route;
+  gRoutingFunctionMap["custom_min_adaptive_global_mesh"] = &custom_min_adaptive_global_route;
 }
 
 void KNCube::_BuildNet(const Configuration &config)
@@ -364,6 +367,176 @@ void KNCube::InsertRandomFaults(const Configuration &config)
 double KNCube::Capacity() const
 {
   return (double)_k / (_mesh ? 8.0 : 4.0);
+}
+
+void custom_min_adaptive_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
+  // Handle injection first
+  if (inject)
+  {
+    outputs->Clear();
+    outputs->AddRange(-1, 0, gNumVCs - 1);
+    return;
+  }
+
+  int vcBegin = 0, vcEnd = gNumVCs - 1;
+  // Handle different flit types
+  if (f->type == Flit::READ_REQUEST)
+  {
+    vcBegin = gReadReqBeginVC;
+    vcEnd = gReadReqEndVC;
+  }
+  else if (f->type == Flit::WRITE_REQUEST)
+  {
+    vcBegin = gWriteReqBeginVC;
+    vcEnd = gWriteReqEndVC;
+  }
+  else if (f->type == Flit::READ_REPLY)
+  {
+    vcBegin = gReadReplyBeginVC;
+    vcEnd = gReadReplyEndVC;
+  }
+  else if (f->type == Flit::WRITE_REPLY)
+  {
+    vcBegin = gWriteReplyBeginVC;
+    vcEnd = gWriteReplyEndVC;
+  }
+  assert(((f->vc >= vcBegin) && (f->vc <= vcEnd)) || (inject && (f->vc < 0)));
+
+  outputs->Clear();
+
+  if (r->GetID() == f->dest)
+  {
+    // At destination router
+    outputs->AddRange(2 * gN, vcBegin, vcEnd);
+    return;
+  }
+
+  // Each dimension must have at least 2 VCs assigned to prevent deadlock
+  int const available_vcs = (vcEnd - vcBegin + 1) / 2;
+  assert(available_vcs > 0);
+
+  // Get minimal paths in both orderings
+  int out_port_ascending = dim_order_helper(r->GetID(), f->dest, false);
+  int out_port_descending = dim_order_helper(r->GetID(), f->dest, true);
+
+  // Choose order based on congestion if at injection, otherwise maintain existing order
+  bool ascending_order;
+  if (in_channel < 2 * gN)
+  {
+    // At injection - check congestion
+    int credit_ascending = r->GetUsedCredit(out_port_ascending);
+    int credit_descending = r->GetUsedCredit(out_port_descending);
+
+    if (credit_ascending > credit_descending)
+    {
+      ascending_order = false;
+    }
+    else if (credit_ascending < credit_descending)
+    {
+      ascending_order = true;
+    }
+    else
+    {
+      // Break ties randomly
+      ascending_order = (RandomInt(1) > 0);
+    }
+  }
+  else
+  {
+    // Not at injection - maintain order based on current VC
+    ascending_order = (f->vc < (vcBegin + available_vcs));
+  }
+
+  // Set output port and adjust VC range based on chosen order
+  if (ascending_order)
+  {
+    outputs->AddRange(out_port_ascending, vcBegin, vcBegin + available_vcs - 1);
+  }
+  else
+  {
+    outputs->AddRange(out_port_descending, vcBegin + available_vcs, vcEnd);
+  }
+
+  if (f->watch)
+  {
+    *gWatchOut << GetSimTime() << " | " << r->FullName() << " | "
+               << "Minimal adaptive routing choosing "
+               << (ascending_order ? "ascending" : "descending")
+               << " path at output port " << (ascending_order ? out_port_ascending : out_port_descending)
+               << " for flit " << f->id
+               << "." << endl;
+  }
+}
+
+void custom_min_adaptive_global_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
+  if (inject)
+  {
+    outputs->Clear();
+    outputs->AddRange(-1, 0, gNumVCs - 1);
+    return;
+  }
+
+  int global_max_threshold = 0;
+  for (int i = 0; i < 2 * gN; i++) // Check all input/output ports
+  {
+    global_max_threshold += r->GetBufferOccupancy(i);
+  }
+  int global_congestion_threshold = global_max_threshold * gThresholdMultiplier / gN; // Average across all ports
+
+  int east_cong = r->GetUsedCredit(0);  // East port
+  int west_cong = r->GetUsedCredit(1);  // West port
+  int south_cong = r->GetUsedCredit(2); // South port
+  int north_cong = r->GetUsedCredit(3); // North port
+
+  int global_avg_congestion = (east_cong + west_cong + south_cong + north_cong) / 4;
+
+  if (global_avg_congestion < global_congestion_threshold)
+  {
+    dim_order_route(r, f, in_channel, outputs, inject);
+  }
+  else
+  {
+    custom_min_adaptive_route(r, f, in_channel, outputs, inject);
+  }
+}
+
+void custom_min_adaptive_local_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
+  // Handle injection first
+  if (inject)
+  {
+    outputs->Clear();
+    outputs->AddRange(-1, 0, gNumVCs - 1);
+    return;
+  }
+
+  // Calculate congestion threshold based on buffer occupancy
+  int max_threshold = 0;
+  for (int i = 0; i < 4; i++)
+  {
+    max_threshold += r->GetBufferOccupancy(i);
+  }
+  int congestion_threshold = max_threshold * gThresholdMultiplier;
+
+  // Check congestion in both X and Y dimensions
+  int east_cong = r->GetUsedCredit(0);  // East port
+  int west_cong = r->GetUsedCredit(1);  // West port
+  int south_cong = r->GetUsedCredit(2); // South port
+  int north_cong = r->GetUsedCredit(3); // North port
+
+  // Calculate average congestion
+  int avg_congestion = (east_cong + west_cong + south_cong + north_cong) / 4;
+
+  if (avg_congestion < congestion_threshold)
+  {
+    dim_order_route(r, f, in_channel, outputs, inject);
+  }
+  else
+  {
+    custom_min_adaptive_route(r, f, in_channel, outputs, inject);
+  }
 }
 
 void custom_global_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)

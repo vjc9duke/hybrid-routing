@@ -62,6 +62,11 @@ public:
 
 extern float gThresholdMultiplier;
 
+void custom_min_adaptive_local_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
+
+void custom_min_adaptive_global_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
+void custom_min_adaptive_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
+
 void custom_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
 
 void custom_global_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject);
