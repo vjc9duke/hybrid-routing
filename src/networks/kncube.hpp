@@ -77,4 +77,6 @@ void dim_order_route(const Router *r, const Flit *f, int in_channel, OutputSet *
 
 int dim_order_helper(int cur, int dest, bool descending);
 
+int dor_next_mesh_2(int cur, int dest, bool descending);
+
 #endif

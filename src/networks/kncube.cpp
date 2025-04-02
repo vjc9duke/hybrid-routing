@@ -369,18 +369,57 @@ double KNCube::Capacity() const
   return (double)_k / (_mesh ? 8.0 : 4.0);
 }
 
-void custom_min_adaptive_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+int dor_next_mesh_2(int cur, int dest, bool descending)
 {
-  // Handle injection first
-  if (inject)
+  if (cur == dest)
   {
-    outputs->Clear();
-    outputs->AddRange(-1, 0, gNumVCs - 1);
-    return;
+    return 2 * gN; // Eject
   }
 
+  int dim_left;
+
+  if (descending)
+  {
+    for (dim_left = (gN - 1); dim_left > 0; --dim_left)
+    {
+      if ((cur * gK / gNodes) != (dest * gK / gNodes))
+      {
+        break;
+      }
+      cur = (cur * gK) % gNodes;
+      dest = (dest * gK) % gNodes;
+    }
+    cur = (cur * gK) / gNodes;
+    dest = (dest * gK) / gNodes;
+  }
+  else
+  {
+    for (dim_left = 0; dim_left < (gN - 1); ++dim_left)
+    {
+      if ((cur % gK) != (dest % gK))
+      {
+        break;
+      }
+      cur /= gK;
+      dest /= gK;
+    }
+    cur %= gK;
+    dest %= gK;
+  }
+
+  if (cur < dest)
+  {
+    return 2 * dim_left; // Right
+  }
+  else
+  {
+    return 2 * dim_left + 1; // Left
+  }
+}
+
+void custom_min_adaptive_route(const Router *r, const Flit *f, int in_channel, OutputSet *outputs, bool inject)
+{
   int vcBegin = 0, vcEnd = gNumVCs - 1;
-  // Handle different flit types
   if (f->type == Flit::READ_REQUEST)
   {
     vcBegin = gReadReqBeginVC;
@@ -405,67 +444,96 @@ void custom_min_adaptive_route(const Router *r, const Flit *f, int in_channel, O
 
   outputs->Clear();
 
-  if (r->GetID() == f->dest)
+  if (inject)
   {
-    // At destination router
+    // injection can use all VCs
+    outputs->AddRange(-1, vcBegin, vcEnd);
+    return;
+  }
+  else if (r->GetID() == f->dest)
+  {
+    // ejection can also use all VCs
     outputs->AddRange(2 * gN, vcBegin, vcEnd);
     return;
   }
 
-  // Each dimension must have at least 2 VCs assigned to prevent deadlock
-  int const available_vcs = (vcEnd - vcBegin + 1) / 2;
-  assert(available_vcs > 0);
+  int in_vc;
 
-  // Get minimal paths in both orderings
-  int out_port_ascending = dim_order_helper(r->GetID(), f->dest, false);
-  int out_port_descending = dim_order_helper(r->GetID(), f->dest, true);
-
-  // Choose order based on congestion if at injection, otherwise maintain existing order
-  bool ascending_order;
-  if (in_channel < 2 * gN)
+  if (in_channel == 2 * gN)
   {
-    // At injection - check congestion
-    int credit_ascending = r->GetUsedCredit(out_port_ascending);
-    int credit_descending = r->GetUsedCredit(out_port_descending);
-
-    if (credit_ascending > credit_descending)
-    {
-      ascending_order = false;
-    }
-    else if (credit_ascending < credit_descending)
-    {
-      ascending_order = true;
-    }
-    else
-    {
-      // Break ties randomly
-      ascending_order = (RandomInt(1) > 0);
-    }
+    in_vc = vcEnd; // ignore the injection VC
   }
   else
   {
-    // Not at injection - maintain order based on current VC
-    ascending_order = (f->vc < (vcBegin + available_vcs));
+    in_vc = f->vc;
   }
 
-  // Set output port and adjust VC range based on chosen order
-  if (ascending_order)
-  {
-    outputs->AddRange(out_port_ascending, vcBegin, vcBegin + available_vcs - 1);
-  }
-  else
-  {
-    outputs->AddRange(out_port_descending, vcBegin + available_vcs, vcEnd);
-  }
+  // DOR for the escape channel (VC 0), low priority
+  int out_port = dor_next_mesh_2(r->GetID(), f->dest, false);
+  outputs->AddRange(out_port, 0, vcBegin, vcBegin);
 
   if (f->watch)
   {
     *gWatchOut << GetSimTime() << " | " << r->FullName() << " | "
-               << "Minimal adaptive routing choosing "
-               << (ascending_order ? "ascending" : "descending")
-               << " path at output port " << (ascending_order ? out_port_ascending : out_port_descending)
+               << "Adding VC range ["
+               << vcBegin << ","
+               << vcBegin << "]"
+               << " at output port " << out_port
                << " for flit " << f->id
+               << " (input port " << in_channel
+               << ", destination " << f->dest << ")"
                << "." << endl;
+  }
+
+  if (in_vc != vcBegin)
+  { // If not in the escape VC
+    // Minimal adaptive for all other channels
+    int cur = r->GetID();
+    int dest = f->dest;
+
+    for (int n = 0; n < gN; ++n)
+    {
+      if ((cur % gK) != (dest % gK))
+      {
+        // Add minimal direction in dimension 'n'
+        if ((cur % gK) < (dest % gK))
+        { // Right
+          if (f->watch)
+          {
+            *gWatchOut << GetSimTime() << " | " << r->FullName() << " | "
+                       << "Adding VC range ["
+                       << (vcBegin + 1) << ","
+                       << vcEnd << "]"
+                       << " at output port " << 2 * n
+                       << " with priority " << 1
+                       << " for flit " << f->id
+                       << " (input port " << in_channel
+                       << ", destination " << f->dest << ")"
+                       << "." << endl;
+          }
+          outputs->AddRange(2 * n, vcBegin + 1, vcEnd, 1);
+        }
+        else
+        { // Left
+          if (f->watch)
+          {
+            *gWatchOut << GetSimTime() << " | " << r->FullName() << " | "
+                       << "Adding VC range ["
+                       << (vcBegin + 1) << ","
+                       << vcEnd << "]"
+                       << " at output port " << 2 * n + 1
+                       << " with priority " << 1
+                       << " for flit " << f->id
+                       << " (input port " << in_channel
+                       << ", destination " << f->dest << ")"
+                       << "." << endl;
+          }
+          outputs->AddRange(2 * n + 1, vcBegin + 1, vcEnd, 1);
+        }
+      }
+      cur /= gK;
+      dest /= gK;
+    }
   }
 }
 

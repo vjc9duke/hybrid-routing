@@ -72,7 +72,7 @@
  // Routing
  
  
- routing_function = custom_min_adaptive_global;
+ routing_function = custom_min_adaptive;
  threshold_multiplier = 0.25;
  packet_size = 1;
  
