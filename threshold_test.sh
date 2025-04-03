@@ -4,29 +4,25 @@ CONFIG_FILE="runfiles/customconfig"  # Change this to your actual file
 BINARY="./src/booksim"        # Change this to your actual binary
 OUTPUT_FILE="uniform.txt"
 PYTHON_SCRIPT="update_excel.py"
-GRAPH_SCRIPT="make_graph.py"
-K_VALUE=(4 5 6 7 8 9 10)
-TRAFFIC_PATTERNS=("uniform" "bitcomp" "transpose" "tornado" "randperm")
-ROUTING_FUNCTIONS=("custom" "custom_global")
+
+TRAFFIC_PATTERNS=("uniform")
+ROUTING_FUNCTIONS=("custom_turn_local" "custom__turn_global" "custom_min_adaptive" "custom_min_adaptive_local" "custom_min_adaptive_global" ) #"custom_min_adaptive_local" "custom_min_adaptive_global"
 TIMEOUT_DURATION=120
 
 trap "echo 'Script interrupted. Exiting...'; exit 1" SIGINT
 
 
-
-for traffic in "${TRAFFIC_PATTERNS[@]}"; do
-  CSV_FILE="${traffic}.csv"
-  
-  echo -n "Routing Function" > "$CSV_FILE"  # First column label
+for routing in "${ROUTING_FUNCTIONS[@]}"; do
+  CSV_FILE="${routing}_threshold.csv"
+  echo -n "Threshold" > "$CSV_FILE"  # First column label
     for rate in $(seq 0.01 0.01 0.70); do
         echo -n ",$rate" >> "$CSV_FILE"  
     done
   echo "" >> "$CSV_FILE"
-  
-  sed -i "0,/^traffic       = .*/s//traffic       = $traffic;/" "$CONFIG_FILE"
-  for routing in "${ROUTING_FUNCTIONS[@]}"; do  
-      echo -n "$routing" >> "$CSV_FILE"  
-      sed -i "0,/^routing_function = .*/s//routing_function = $routing;/" "$CONFIG_FILE"
+  sed -i "0,/^routing_function = .*/s//routing_function = $routing;/" "$CONFIG_FILE"
+  for threshold in $(seq 0.01 0.10 0.70); do  
+      echo -n "$threshold" >> "$CSV_FILE"  
+      sed -i "0,/^threshold_multiplier = .*/s//threshold_multiplier =  $threshold;/" "$CONFIG_FILE"
     for rate in $(seq 0.01 0.01 0.70); do  # Increment by 0.01 up to 0.20
         # Modify only the first occurrence of injection_rate in the config file
         sed -i "0,/^injection_rate = .*/s//injection_rate = $rate;/" "$CONFIG_FILE"
@@ -55,9 +51,10 @@ for traffic in "${TRAFFIC_PATTERNS[@]}"; do
     
         echo "Injection Rate: $rate, Packet Latency Average: $latency"
         
-        python3 "$PYTHON_SCRIPT" "$CSV_FILE" "$routing" "$rate" "$latency"
+        echo "$rate $threshold $latency"
+        
+        python3 "$PYTHON_SCRIPT" "$CSV_FILE" "$threshold" "$rate" "$latency"
     done
     echo "" >> "$CSV_FILE"  # Add a newline after each routing function
   done
-  python3 "$GRAPH_SCRIPT" "$CSV_FILE"
 done

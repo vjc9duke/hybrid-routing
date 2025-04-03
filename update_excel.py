@@ -19,7 +19,13 @@ else:
     df.index.name = "Routing Function"  # Set the index name
 
 # Ensure the routing function exists in the index
+try:
+  routing_function = float(routing_function)
+  print("Is number")
+except:
+  routing_function = str(routing_function)
 if routing_function not in df.index:
+    print("Not here")
     df.loc[routing_function] = [None] * len(df.columns)  # Initialize row if missing
 
 # Update the correct cell
