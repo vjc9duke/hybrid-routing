@@ -13,6 +13,7 @@ df = pd.read_csv(file_path)
 label = df.columns[0]
 thresholds = df[label]
 df_numeric = df.drop(columns=[label])
+#print("Thresholds: ", thresholds)
 x_values = df_numeric.columns.astype(float)
 
 if pd.api.types.is_numeric_dtype(thresholds):
@@ -26,7 +27,10 @@ plt.figure(figsize=(10, 6))
 for i, row in df_numeric.iterrows():
     if use_colormap:
         color = cmap(norm(thresholds[i]))
+        plt.plot(x_values, row, label=str(thresholds[i]), color=color, linewidth=1.5, alpha=0.7)
     else:
+        #print("Here")
+        #print(str(thresholds[i]))
         plt.plot(x_values, row, label=str(thresholds[i]), linewidth=1.5, alpha=0.7)
 
 png_filename = file_path.rsplit(".", 1)[0] + ".png"

@@ -5,7 +5,7 @@ BINARY="./src/booksim"        # Change this to your actual binary
 OUTPUT_FILE="uniform.txt"
 PYTHON_SCRIPT="update_excel.py"
 
-TRAFFIC_PATTERNS=("uniform")
+TRAFFIC_PATTERNS=("transpose")
 ROUTING_FUNCTIONS=("custom_turn_local" "custom__turn_global" "custom_min_adaptive" "custom_min_adaptive_local" "custom_min_adaptive_global" ) #"custom_min_adaptive_local" "custom_min_adaptive_global"
 TIMEOUT_DURATION=120
 
@@ -13,14 +13,14 @@ trap "echo 'Script interrupted. Exiting...'; exit 1" SIGINT
 
 
 for routing in "${ROUTING_FUNCTIONS[@]}"; do
-  CSV_FILE="${routing}_threshold.csv"
+  CSV_FILE="${routing}_threshold_$TRAFFIC_PATTERN.csv"
   echo -n "Threshold" > "$CSV_FILE"  # First column label
     for rate in $(seq 0.01 0.01 0.70); do
         echo -n ",$rate" >> "$CSV_FILE"  
     done
   echo "" >> "$CSV_FILE"
   sed -i "0,/^routing_function = .*/s//routing_function = $routing;/" "$CONFIG_FILE"
-  for threshold in $(seq 0.01 0.10 0.70); do  
+  for threshold in $(seq 0.6 0.10 1.00); do  
       echo -n "$threshold" >> "$CSV_FILE"  
       sed -i "0,/^threshold_multiplier = .*/s//threshold_multiplier =  $threshold;/" "$CONFIG_FILE"
     for rate in $(seq 0.01 0.01 0.70); do  # Increment by 0.01 up to 0.20
